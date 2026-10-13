@@ -1,0 +1,33 @@
+{
+  "meta": {
+    "found": 1
+  },
+  "results": [
+    {
+      "id": 223,
+      "name": "Ankara station",
+      "locality": null,
+      "timezone": "Europe/Istanbul",
+      "country": {
+        "code": "TR",
+        "name": "Turkey"
+      },
+      "coordinates": {
+        "latitude": 39.9334,
+        "longitude": 32.8597
+      },
+      "sensors": [
+        {
+          "id": 556,
+          "name": "pm25 ug/m3",
+          "parameter": {
+            "id": 2,
+            "name": "pm25",
+            "units": "ug/m3",
+            "displayName": "PM2.5"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "results": [
+    {
+      "value": 12.3,
+      "parameter": {
+        "id": 2,
+        "name": "pm25",
+        "units": "µg/m³"
+      },
+      "period": {
+        "label": "raw",
+        "interval": "01:00:00",
+        "datetimeFrom": {
+          "utc": "2026-10-12T10:00:00Z",
+          "local": "2026-10-12T13:00:00+03:00"
+        },
+        "datetimeTo": {
+          "utc": "2026-10-12T11:00:00Z",
+          "local": "2026-10-12T14:00:00+03:00"
+        }
+      }
+    },
+    {
+      "value": -999,
+      "parameter": {
+        "id": 2,
+        "name": "pm25",
+        "units": "µg/m³"
+      },
+      "period": {
+        "label": "raw",
+        "interval": "01:00:00",
+        "datetimeFrom": {
+          "utc": "2026-10-12T13:00:00Z",
+          "local": "2026-10-12T16:00:00+03:00"
+        },
+        "datetimeTo": {
+          "utc": "2026-10-12T14:00:00Z",
+          "local": "2026-10-12T17:00:00+03:00"
+        }
+      }
+    }
+  ]
+}

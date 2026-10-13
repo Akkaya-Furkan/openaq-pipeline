@@ -1,0 +1,79 @@
+{
+  "meta": {
+    "found": ">1000"
+  },
+  "results": [
+    {
+      "id": 123,
+      "name": "Istanbul station",
+      "locality": null,
+      "timezone": "Europe/Istanbul",
+      "country": {
+        "code": "TR",
+        "name": "Turkey"
+      },
+      "coordinates": {
+        "latitude": 41.0082,
+        "longitude": 28.9784
+      },
+      "sensors": [
+        {
+          "id": 456,
+          "name": "pm25 µg/m³",
+          "parameter": {
+            "id": 2,
+            "name": "pm25",
+            "units": "µg/m³",
+            "displayName": "PM2.5"
+          }
+        },
+        {
+          "id": 457,
+          "name": "no2 ppb",
+          "parameter": {
+            "id": 5,
+            "name": "no2",
+            "units": "ppb",
+            "displayName": "NO2"
+          }
+        },
+        {
+          "id": 458,
+          "name": "o3 ppb",
+          "parameter": {
+            "id": 5,
+            "name": "o3",
+            "units": "ppb",
+            "displayName": "O3"
+          }
+        }
+      ]
+    },
+    {
+      "id": 124,
+      "name": "Ozone only",
+      "locality": null,
+      "timezone": "Europe/Istanbul",
+      "country": {
+        "code": "TR",
+        "name": "Turkey"
+      },
+      "coordinates": {
+        "latitude": 41.0,
+        "longitude": 29.0
+      },
+      "sensors": [
+        {
+          "id": 459,
+          "name": "o3 ppb",
+          "parameter": {
+            "id": 5,
+            "name": "o3",
+            "units": "ppb",
+            "displayName": "O3"
+          }
+        }
+      ]
+    }
+  ]
+}
