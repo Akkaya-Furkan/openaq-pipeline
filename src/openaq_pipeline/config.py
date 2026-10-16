@@ -12,21 +12,28 @@ class MissingApiKey(ValueError):
     """No OpenAQ API key was configured."""
 
 
-def api_key():
-    key = os.environ.get("OPENAQ_API_KEY")
-    if key:
-        return key
+def setting(name):
+    """Environment variable first, then ``.env`` in the working directory; None if unset."""
+    value = os.environ.get(name)
+    if value:
+        return value
     path = Path.cwd() / ".env"
     if path.is_file():
         for line in path.read_text().splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
-            name, value = line.split("=", 1)
-            if name.strip() == "OPENAQ_API_KEY":
-                key = value.strip().strip("\"'")
-                if key:
-                    return key
+            key, value = line.split("=", 1)
+            value = value.strip().strip("\"'")
+            if key.strip() == name and value:
+                return value
+    return None
+
+
+def api_key():
+    key = setting("OPENAQ_API_KEY")
+    if key:
+        return key
     raise MissingApiKey(
         "Create a free API key at https://explore.openaq.org/register "
         "and put OPENAQ_API_KEY=... in .env."

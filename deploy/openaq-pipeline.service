@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenAQ air-quality pipeline: fetch, load, WHO alerts
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+# optional: OPENAQ_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (never committed)
+EnvironmentFile=-%h/.config/openaq-pipeline/env
+# keep the machine awake while the run is in progress
+ExecStart=/usr/bin/systemd-inhibit --what=sleep --who=openaq-pipeline --why="air-quality pipeline run" @REPO@/.venv/bin/python -m openaq_pipeline --alerts
+TimeoutStartSec=15min

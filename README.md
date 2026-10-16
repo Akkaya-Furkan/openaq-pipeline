@@ -72,6 +72,64 @@ Run the offline test suite:
 The response shapes are validated by mocked tests and should be re-checked
 against the live API on the first keyed run.
 
+## Scheduling (systemd --user)
+
+`deploy/` holds `openaq-pipeline.service` (oneshot, wrapped in `systemd-inhibit --what=sleep`
+so the machine does not suspend mid-run) and `openaq-pipeline.timer` (hourly, `Persistent=true`).
+Install for this checkout (needs `pip install -e .[dev,dashboard]` in `.venv` first):
+
+```bash
+deploy/install.sh                       # renders the unit paths, enables the timer
+systemctl --user list-timers openaq-pipeline.timer
+systemctl --user start openaq-pipeline.service   # run once now
+journalctl --user -u openaq-pipeline.service -n 50
+```
+
+The unit reads optional secrets from `~/.config/openaq-pipeline/env` (`KEY=value` lines,
+`chmod 600`); a `.env` in the checkout also works. Timers only run while the user session
+is active unless you enable lingering (`loginctl enable-linger $USER`).
+
+## WHO threshold alerts (Telegram)
+
+`python -m openaq_pipeline --alerts` runs the pipeline, then compares each sensor's **24-hour
+mean** (hourly values ending at its latest reading; at least 18 valid hours, reading not older
+than 6 h) with the WHO 2021 24-hour guideline. `--skip-fetch` evaluates stored data only.
+
+| Parameter | WHO 2021 AQG (24 h) | Annual |
+| --- | --- | --- |
+| PM2.5 | 15 µg/m³ | 5 µg/m³ |
+| PM10 | 45 µg/m³ | 15 µg/m³ |
+| NO2 | 25 µg/m³ | 10 µg/m³ |
+| O3 | 100 µg/m³ (8-hour) | 60 µg/m³ (peak season) |
+| SO2 | 40 µg/m³ | |
+| CO | 4 mg/m³ | |
+
+Source: WHO global air quality guidelines 2021 (Geneva: World Health Organization, 2021), Table 0.1.
+The values were cross-checked against the WHO guideline summary presented to the UNECE Air
+Convention EPCAC panel, 29 Nov 2021
+(https://iiasa.ac.at/sites/default/files/2025-02/WHO%20global%20air%20quality%20guidelines%202021_%20Setting%20ambitious%20goals%20for%20air%20quality%20to%20protect%20public%20health.pdf),
+a PMC overview and a web search; the WHO publication's own PDF returned HTTP 403 to the
+automated fetch, so the table itself was read from that summary. Short-term AQG levels are
+99th percentiles (3-4 exceedance days a year), so one day above 15 µg/m³ is an alert, not
+a violation. Only PM2.5 and NO2 are ingested; the other rows are in `guidelines.py` for later.
+
+Delivery: set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in the environment (never in the
+repo). Without them the alert text is only logged (`[dry-run] would send`) and nothing is
+recorded as sent. At most one message per sensor and UTC day is sent; a failed delivery is
+retried on the next run. Error messages never contain the bot token.
+
+## Dashboard
+
+```bash
+.venv/bin/streamlit run src/openaq_pipeline/dashboard.py   # OPENAQ_DB overrides data/air.db
+```
+
+Shows the last run, sensors above the WHO 24-hour guideline, the latest value per sensor, and
+hourly time series per parameter with the guideline as a flat reference line, with city,
+parameter and sensor selectors. The database is opened read-only.
+
 ## Status
 
-Day 1 (extract/transform/load) done; scheduling, alerts and dashboard next.
+P9/1 (extract/transform/load) and P9/2 (timer, alerts, dashboard) done. Known gap: on the
+first real runs Ankara returned no measurements (36 sensors, 0 rows), so the dashboard is
+Istanbul-only until that is investigated.
