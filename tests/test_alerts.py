@@ -1,3 +1,4 @@
+import smtplib
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -15,10 +16,10 @@ class Recorder:
     def __init__(self, fail=False):
         self.sent, self.fail = [], fail
 
-    def send(self, text):
+    def send(self, subject, body):
         if self.fail:
             raise RuntimeError("down")
-        self.sent.append(text)
+        self.sent.append((subject, body))
 
 
 def seed(path, value, hours=24, parameter="pm25", sensor_id=1):
@@ -44,8 +45,9 @@ def test_exceedance_detected_and_message(tmp_path):
     conn = seed(tmp_path / "a.db", 30.0)
     found = alerts.exceedances(conn, now=END + timedelta(hours=1))
     assert [(f["sensor_id"], f["mean"], f["limit"]) for f in found] == [(1, 30.0, 15.0)]
-    text = alerts.format_message(found[0])
-    assert "PM2.5" in text and "30" in text and "15" in text and "Kadikoy" in text
+    subject, body = alerts.format_email(found)
+    assert "1 station above" in subject and "PM2.5 30.0" in subject and "2.0x" in subject
+    assert "Kadikoy" in subject and "Kadikoy" in body and "WHO 24h" in body and "15" in body
 
 
 def test_at_guideline_is_not_exceedance_and_sparse_or_stale_ignored(tmp_path):
@@ -82,34 +84,89 @@ def test_dry_run_does_not_consume_the_daily_alert(tmp_path):
     assert alerts.check_and_notify(conn, Recorder(), now)["alerts_sent"] == 1
 
 
-def test_dry_run_when_telegram_env_missing(monkeypatch, tmp_path):
-    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+ENV = {"SMTP_HOST": "smtp.example.org", "SMTP_USER": "u", "SMTP_PASSWORD": "SECRETPW",
+       "ALERT_EMAIL_FROM": "a@example.org", "ALERT_EMAIL_TO": "b@example.org"}
+
+
+def clear_env(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)  # no .env here
+    for name in (*notify.REQUIRED, "SMTP_PORT"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_dry_run_when_smtp_env_missing_and_logged(monkeypatch, tmp_path, caplog):
+    clear_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.org")
     transport = notify.make_transport()
     assert transport.name == "dry-run"
+    assert "SMTP_PASSWORD" in caplog.text and "dry-run only" in caplog.text
     lines = []
-    notify.DryRunTransport(lines.append).send("hello")
-    assert lines == ["hello"]
+    notify.DryRunTransport(lines.append).send("subj", "body")
+    assert lines == ["Subject: subj\n\nbody"]
 
 
-def test_telegram_transport_payload_and_token_not_leaked(monkeypatch):
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:SECRET")
-    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
-    seen = []
+class FakeSMTP:
+    instances = []
 
-    def handler(request):
-        seen.append(request)
-        return httpx.Response(200 if len(seen) == 1 else 401, json={"ok": True})
+    def __init__(self, host, port):
+        self.host, self.port, self.log, self.fail = host, port, [], False
+        FakeSMTP.instances.append(self)
 
-    transport = notify.make_transport(httpx.Client(transport=httpx.MockTransport(handler)))
-    assert transport.name == "telegram"
-    transport.send("hi")
-    assert seen[0].url.path == "/bot123:SECRET/sendMessage"
-    assert seen[0].content == b'{"chat_id":"42","text":"hi"}'
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def login(self, user, password):
+        self.log.append(("login", user, password))
+        if self.fail:
+            raise smtplib.SMTPAuthenticationError(535, b"bad credentials for u")
+
+    def send_message(self, message):
+        self.log.append(("send", message))
+
+
+def test_email_transport_message_and_default_port(monkeypatch, tmp_path):
+    clear_env(monkeypatch, tmp_path)
+    for name, value in ENV.items():
+        monkeypatch.setenv(name, value)
+    FakeSMTP.instances.clear()
+    transport = notify.make_transport(smtp=FakeSMTP)
+    assert transport.name == "email"
+    transport.send("Subject line", "Body text")
+    smtp = FakeSMTP.instances[0]
+    assert (smtp.host, smtp.port) == ("smtp.example.org", 587)
+    message = smtp.log[1][1]
+    assert message["To"] == "b@example.org" and message["From"] == "a@example.org"
+    assert message["Subject"] == "Subject line" and "Body text" in message.get_content()
+
+
+def test_email_failure_does_not_leak_credentials(monkeypatch, tmp_path):
+    clear_env(monkeypatch, tmp_path)
+    for name, value in ENV.items():
+        monkeypatch.setenv(name, value)
+
+    def failing(host, port):
+        smtp = FakeSMTP(host, port)
+        smtp.fail = True
+        return smtp
+
     with pytest.raises(RuntimeError) as error:
-        transport.send("again")
-    assert "SECRET" not in str(error.value) and "401" in str(error.value)
+        notify.make_transport(smtp=failing).send("s", "b")
+    assert "SECRETPW" not in str(error.value) and "bad credentials" not in str(error.value)
+    assert "SMTPAuthenticationError" in str(error.value)
+
+
+def test_one_email_per_run_covers_all_stations(tmp_path):
+    conn = seed(tmp_path / "a.db", 30.0)
+    seed(tmp_path / "a.db", 60.0, sensor_id=2)
+    recorder = Recorder()
+    result = alerts.check_and_notify(conn, recorder, END + timedelta(hours=1))
+    assert result["alerts_sent"] == 2 and len(recorder.sent) == 1
+    subject, body = recorder.sent[0]
+    assert "2 stations above" in subject and "4.0x" in subject  # worst first
+    assert body.index("60.0") < body.index("30.0")
 
 
 def test_dashboard_queries(tmp_path):
@@ -132,8 +189,7 @@ def test_cli_alerts_dry_run(tmp_path, monkeypatch, capsys, caplog):
     path = tmp_path / "a.db"
     seed(path, 30.0).close()
     monkeypatch.chdir(tmp_path)
-    for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
-        monkeypatch.delenv(name, raising=False)
+    clear_env(monkeypatch, tmp_path)
     monkeypatch.setattr(sys, "argv", ["x", "--db", str(path), "--skip-fetch"])
     monkeypatch.setattr(alerts, "MAX_AGE_HOURS", 10**6)  # fixture data is old
     assert cli.main() == 0

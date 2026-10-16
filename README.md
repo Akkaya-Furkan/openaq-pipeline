@@ -86,10 +86,10 @@ journalctl --user -u openaq-pipeline.service -n 50
 ```
 
 The unit reads optional secrets from `~/.config/openaq-pipeline/env` (`KEY=value` lines,
-`chmod 600`); a `.env` in the checkout also works. Timers only run while the user session
+`chmod 600`, not in the repo; see the example below); a `.env` in the checkout also works. Timers only run while the user session
 is active unless you enable lingering (`loginctl enable-linger $USER`).
 
-## WHO threshold alerts (Telegram)
+## WHO threshold alerts (e-mail)
 
 `python -m openaq_pipeline --alerts` runs the pipeline, then compares each sensor's **24-hour
 mean** (hourly values ending at its latest reading; at least 18 valid hours, reading not older
@@ -113,10 +113,25 @@ automated fetch, so the table itself was read from that summary. Short-term AQG 
 99th percentiles (3-4 exceedance days a year), so one day above 15 µg/m³ is an alert, not
 a violation. Only PM2.5 and NO2 are ingested; the other rows are in `guidelines.py` for later.
 
-Delivery: set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in the environment (never in the
-repo). Without them the alert text is only logged (`[dry-run] would send`) and nothing is
-recorded as sent. At most one message per sensor and UTC day is sent; a failed delivery is
-retried on the next run. Error messages never contain the bot token.
+Delivery is one e-mail per run covering every new exceedance: the subject carries the station
+count and the worst exceedance, the body a table of 24-hour mean vs WHO guideline per station.
+At most one report per sensor (station + parameter) and UTC day; a failed send is retried on
+the next run. Credentials come only from the environment or `.env`, never the repo:
+
+```dotenv
+# ~/.config/openaq-pipeline/env   (chmod 600)
+OPENAQ_API_KEY=...
+SMTP_HOST=smtp.example.org
+SMTP_PORT=587            # optional, default 587 (STARTTLS); 465 uses implicit TLS
+SMTP_USER=...
+SMTP_PASSWORD=...
+ALERT_EMAIL_FROM=alerts@example.org
+ALERT_EMAIL_TO=you@example.org
+```
+
+If any of the five SMTP keys other than the port is missing, the run logs which ones are
+missing and prints the e-mail as `[dry-run] would send e-mail`; nothing is sent and nothing is
+recorded as sent. Error messages never contain the password.
 
 ## Dashboard
 
@@ -130,6 +145,6 @@ parameter and sensor selectors. The database is opened read-only.
 
 ## Status
 
-P9/1 (extract/transform/load) and P9/2 (timer, alerts, dashboard) done. Known gap: on the
+P9/1 (extract/transform/load) and P9/2 (timer, alerts, dashboard) done (alert channel: e-mail; the Telegram transport was dropped on 16.10). Known gap: on the
 first real runs Ankara returned no measurements (36 sensors, 0 rows), so the dashboard is
 Istanbul-only until that is investigated.

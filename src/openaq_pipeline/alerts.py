@@ -59,40 +59,54 @@ def exceedances(conn, now=None, max_age_hours=None):
     return found
 
 
-def format_message(item):
-    label = guidelines.LABELS.get(item["parameter"], item["parameter"])
-    return (f"WHO air-quality alert: {label} 24 h mean {item['mean']} µg/m³ exceeds the "
-            f"WHO 2021 guideline of {item['limit']:g} µg/m³ ({item['mean'] / item['limit']:.1f}×)\n"
-            f"{item['station']} ({item['city']}), sensor {item['sensor_id']}, "
-            f"window ending {item['window_end']} ({item['hours']} hourly values)")
+def format_email(items):
+    """Subject and body for one e-mail covering all new exceedances (worst ratio first)."""
+    items = sorted(items, key=lambda i: i["mean"] / i["limit"], reverse=True)
+    worst = items[0]
+    label = guidelines.LABELS.get(worst["parameter"], worst["parameter"])
+    subject = (f"Air quality: {len(items)} station{'s' if len(items) != 1 else ''} above WHO guideline; "
+               f"worst {label} {worst['mean']} µg/m³ ({worst['mean'] / worst['limit']:.1f}x) "
+               f"at {worst['station']}")
+    rows = [f"{'Station':<40} {'Param':<6} {'24h mean':>9} {'WHO 24h':>8} {'Ratio':>6}  Window end (UTC)"]
+    for i in items:
+        rows.append(f"{i['station'][:40]:<40} {guidelines.LABELS.get(i['parameter'], i['parameter']):<6} "
+                    f"{i['mean']:>9} {i['limit']:>8g} {i['mean'] / i['limit']:>5.1f}x  {i['window_end']}")
+    body = ("24-hour means (hourly values ending at each sensor's latest reading, µg/m³) above the "
+            "WHO 2021 24-hour air quality guideline:\n\n" + "\n".join(rows) +
+            "\n\nWHO 2021 guideline (24 h): PM2.5 15, NO2 25 µg/m³. Short-term guideline levels are "
+            "99th percentiles (3-4 exceedance days a year).\n")
+    return subject, body
 
 
 def check_and_notify(conn, transport, now=None):
-    """Send one message per sensor and UTC day; a failed delivery is retried on the next run."""
+    """One e-mail per run for exceedances not yet reported; at most one report per sensor
+    (hence station and parameter) and UTC day. A failed delivery is retried on the next run."""
     init(conn)
-    sent = failed = skipped = 0
+    now = now or datetime.now(timezone.utc)
+    new, duplicate = [], 0
     for item in exceedances(conn, now):
-        day = item["window_end"][:10]
         previous = conn.execute("SELECT delivered FROM alerts WHERE sensor_id=? AND day_utc=?",
-                                (item["sensor_id"], day)).fetchone()
+                                (item["sensor_id"], item["window_end"][:10])).fetchone()
         if previous and previous[0]:
-            skipped += 1
-            continue
+            duplicate += 1
+        else:
+            new.append(item)
+    sent = failed = 0
+    if new:
         try:
-            transport.send(format_message(item))
+            transport.send(*format_email(new))
             delivered = 1
-            sent += 1
+            sent = len(new)
         except Exception as error:
             logger.error("alert delivery failed: %s", error)
             delivered = 0
-            failed += 1
-        if getattr(transport, "dry_run", False):
-            continue  # nothing was delivered: do not suppress the real alert later
-        with conn:
-            conn.execute("INSERT OR REPLACE INTO alerts VALUES (?,?,?,?,?,?,?,?)",
-                         (item["sensor_id"], day, item["window_end"], item["parameter"],
-                          item["mean"], item["limit"],
-                          (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                          delivered))
-    return {"alerts_sent": sent, "alerts_failed": failed, "alerts_duplicate": skipped,
+            failed = len(new)
+        if not getattr(transport, "dry_run", False):  # a dry run must not use up the day's alert
+            with conn:
+                for item in new:
+                    conn.execute("INSERT OR REPLACE INTO alerts VALUES (?,?,?,?,?,?,?,?)",
+                                 (item["sensor_id"], item["window_end"][:10], item["window_end"],
+                                  item["parameter"], item["mean"], item["limit"],
+                                  now.strftime("%Y-%m-%dT%H:%M:%SZ"), delivered))
+    return {"alerts_sent": sent, "alerts_failed": failed, "alerts_duplicate": duplicate,
             "transport": transport.name}
