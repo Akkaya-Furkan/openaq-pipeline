@@ -143,8 +143,56 @@ Shows the last run, sensors above the WHO 24-hour guideline, the latest value pe
 hourly time series per parameter with the guideline as a flat reference line, with city,
 parameter and sensor selectors. The database is opened read-only.
 
+## Limitations
+
+Checked against the code and a local run on 2026-10-25 (42 tests passing; the local database
+holds 210 runs: 208 `ok`, 2 `error`).
+
+- **No alert is ever delivered.** The only alert transport is e-mail over SMTP, and no SMTP
+  settings are configured for this project, so every alert is a dry-run: the message is written to
+  the log as `[dry-run] would send e-mail` and nothing leaves the machine. The SMTP code path is
+  covered only by tests with a fake SMTP server; it has never sent a real message. Telegram
+  support was removed. Alert evaluation itself works on real data (the WHO comparison and
+  once-per-sensor-per-day de-duplication are tested). The hourly timer runs with `--alerts`, so
+  each run produces the dry-run output when a sensor exceeds the guideline.
+- **Ankara has no data.** All 21 Ankara stations (36 sensors) within 25 km are in the database, but
+  with 0 measurements. Live check of the API's `datetimeLast` for those stations: the most recent
+  is 2023-10-11 and the oldest 2018-10-13, so they stopped reporting years ago and the default
+  48-hour window is always empty. This is an upstream coverage fact, not a pipeline bug, and the
+  dashboard is effectively Istanbul-only.
+- **Narrow effective coverage.** Only two cities, PM2.5 and NO2, within a fixed 25 km radius
+  of a hard-coded city centre. Of 100 discovered sensors (63 stations), only 8 sensors at 7
+  stations (all in the Istanbul area) have any stored measurements; the rest are listed by
+  OpenAQ but inactive. Station density and instrument quality are whatever OpenAQ aggregates;
+  no sensor calibration or QA beyond null/negative/unknown-unit flagging is applied.
+- **Short history.** The default window is 48 hours and there is no backfill option beyond
+  `--hours`. The stored series starts on 2026-10-13 and only covers the period the pipeline has
+  run, so it supports no trend or annual-mean analysis.
+- **Data gaps.** Gaps are counted (`gap_hours`, recorded per run) but not filled or interpolated.
+  Hours missing at the source are simply absent, and the 24-hour mean requires at least 18 valid
+  hours, so sensors with sparse data never alert.
+- **OpenAQ API.** A free API key is required and rate limits apply; the client retries on
+  429/5xx and honours `Retry-After` / `x-ratelimit-*` headers, but the exact current quota was
+  not verified. Measurements are fetched per sensor, so run time and request count grow with the
+  number of sensors, including inactive ones. A sensor returning 404 is skipped. Values are
+  whatever the upstream provider reports, and `datetime_utc` is the end of the averaging hour.
+- **NO2 unit conversion** assumes 25 °C and 1 atm (1 ppb = 1.88 µg/m³); other reference
+  conditions would shift the converted values slightly.
+- **WHO thresholds** were transcribed from a secondary summary because the WHO PDF itself returned
+  HTTP 403 to automated fetching; they have not been re-checked against the original table. The
+  24-hour guideline is a 99th-percentile level, so a single exceedance day is an alert, not a
+  violation of the guideline. Hourly values are not compared with any threshold.
+- **Scheduling.** The hourly systemd user timer runs on one personal desktop only and depends on
+  that machine being on and the user session active; there is no hosted deployment, monitoring
+  or retry beyond the next hourly run. The SQLite database is a single local file with no
+  concurrent-writer protection beyond SQLite's own locking.
+- **Dashboard.** Streamlit, read-only, checked in a narrow browser window only; wide and mobile
+  layouts were not reviewed.
+- **Not a health tool.** The project is a portfolio exercise, not an operational air-quality or
+  public-health warning service.
+
 ## Status
 
-P9/1 (extract/transform/load) and P9/2 (timer, alerts, dashboard) done (alert channel: e-mail; the Telegram transport was dropped on 16.10). Known gap: on the
-first real runs Ankara returned no measurements (36 sensors, 0 rows), so the dashboard is
-Istanbul-only until that is investigated.
+P9/1 (extract/transform/load) and P9/2 (timer, alerts, dashboard) are done. The alert channel is
+e-mail but runs as dry-run only (see Limitations). The Ankara stations in OpenAQ stopped
+reporting in 2023, so the dashboard shows Istanbul only.
